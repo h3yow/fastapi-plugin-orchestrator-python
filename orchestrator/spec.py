@@ -40,8 +40,17 @@ class Dependency:
     required_capabilities: frozenset[str] = frozenset()
 
     def accepts(self, version: Version) -> bool:
-        """判断给定版本是否落在兼容区间内。"""
-        raise NotImplementedError
+        """判断给定版本是否落在兼容区间 [min_version, max_version_exclusive) 内。"""
+        v = (version.major, version.minor, version.patch)
+        if self.min_version is not None:
+            m = self.min_version
+            if v < (m.major, m.minor, m.patch):
+                return False
+        if self.max_version_exclusive is not None:
+            m = self.max_version_exclusive
+            if v >= (m.major, m.minor, m.patch):
+                return False
+        return True
 
 
 @dataclass(frozen=True)
@@ -78,4 +87,4 @@ class ModuleContext:
 
     def get(self, module_id: str) -> Any:
         """取依赖模块实例；未启动时返回 None。"""
-        raise NotImplementedError
+        return self._instances.get(module_id)

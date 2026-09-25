@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .errors import DuplicateRegistrationError, ModuleNotFoundError
 from .spec import Module
 
 
@@ -13,12 +14,24 @@ class ModuleRegistry:
 
     def register(self, module: Module) -> None:
         """注册模块；重复注册同一 module_id 抛 DuplicateRegistrationError。"""
-        raise NotImplementedError
+        module_id = module.spec.module_id
+        if module_id in self._modules:
+            raise DuplicateRegistrationError(
+                f"模块重复注册: {module_id}",
+                context={"module_id": module_id},
+            )
+        self._modules[module_id] = module
 
     def get(self, module_id: str) -> Module:
         """按 id 取模块；不存在抛 ModuleNotFoundError。"""
-        raise NotImplementedError
+        try:
+            return self._modules[module_id]
+        except KeyError:
+            raise ModuleNotFoundError(
+                f"模块未注册: {module_id}",
+                context={"module_id": module_id},
+            ) from None
 
     def all(self) -> dict[str, Module]:
         """返回全部已注册模块的副本。"""
-        raise NotImplementedError
+        return dict(self._modules)
