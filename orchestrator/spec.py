@@ -79,6 +79,21 @@ class Module(Protocol):
     def stop(self) -> None: ...
 
 
+@runtime_checkable
+class ReloadableModule(Module, Protocol):
+    """可选协议：模块支持不停机热更新配置。
+
+    实现了 ``reload`` 的模块在配置变更时被原地重载，不发生 stop/start；
+    未实现的模块由框架按 stop -> init -> start 顺序完成"进程内重载"
+    （进程本身不中断、服务不断，但该模块会经历一次重建）。
+
+    ``reload`` 校验新配置不可接受时应抛异常，框架据此整批回滚，
+    模块旧配置必须在异常路径下保持完整生效。
+    """
+
+    def reload(self, config: dict[str, Any], context: "ModuleContext") -> None: ...
+
+
 @dataclass
 class ModuleContext:
     """注入给模块的运行期上下文：可访问已启动依赖的实例。"""

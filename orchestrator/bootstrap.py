@@ -46,6 +46,11 @@ class CoreModule:
         self.config = config
         logger.info("core 初始化，生效配置: %s", config)
 
+    def reload(self, config: dict[str, Any], context: ModuleContext) -> None:
+        """原地热更新：不经过 stop/start，直接替换生效配置。"""
+        self.config = config
+        logger.info("core 热更新，新生效配置: %s", config)
+
     def start(self) -> None:
         logger.info("core 已启动")
 
@@ -88,9 +93,21 @@ class WebModule:
 def build_default_orchestrator(
     service_config: dict[str, dict[str, Any]] | None = None,
     env: dict[str, str] | None = None,
+    environments: dict[str, dict[str, dict[str, Any]]] | None = None,
+    active_environment: str = "default",
 ) -> Orchestrator:
-    """注册示例模块并返回编排器（尚未启动）。"""
+    """注册示例模块并返回编排器（尚未启动）。
+
+    - ``environments``：{环境名: {模块id: {配置键: 值}}}，各环境互不影响。
+    - ``active_environment``：进程启动时的当前部署环境，之后可在运行期切换。
+    """
     registry = ModuleRegistry()
     registry.register(CoreModule())
     registry.register(WebModule())
-    return Orchestrator(registry, service_config=service_config, env=env)
+    return Orchestrator(
+        registry,
+        service_config=service_config,
+        env=env,
+        environments=environments,
+        active_environment=active_environment,
+    )

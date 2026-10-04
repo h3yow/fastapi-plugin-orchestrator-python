@@ -19,6 +19,7 @@ class ConfigSource(str, Enum):
 
     DEFAULT = "default"
     SERVICE = "service"
+    ENVIRONMENT = "environment"
     ENV = "env"
 
 
@@ -47,7 +48,7 @@ class ResolvedValue:
 class LayeredConfig:
     """对单模块的配置做分层解析。
 
-    层优先级：default < service < env。
+    层优先级（高覆盖低）：env > environment > service > default。
     环境变量键形如 ``{ENV_PREFIX}{KEY大写}``。
     """
 
@@ -63,19 +64,25 @@ class LayeredConfig:
         self,
         service_config: dict[str, Any] | None = None,
         env: dict[str, str] | None = None,
+        environment_config: dict[str, Any] | None = None,
     ) -> dict[str, ResolvedValue]:
         """解析并校验，返回 key -> ResolvedValue。
 
         规则：
+        - 层优先级（高覆盖低）：env > environment > service > default
         - 未知键（既非声明键也非旧键）-> UnknownConfigKeyError
         - 校验失败 -> InvalidConfigValueError
         - 同一层内新旧键同时出现且值不一致 -> AmbiguousConfigOverrideError
         - 旧键迁移：旧键视为同层的新键别名，结果确定且来源可解释
         """
         service_config = service_config or {}
+        environment_config = environment_config or {}
         env = env if env is not None else dict(os.environ)
 
         service_layer = self._normalize_layer(service_config, ConfigSource.SERVICE)
+        environment_layer = self._normalize_layer(
+            environment_config, ConfigSource.ENVIRONMENT
+        )
         env_layer = self._normalize_layer(
             self._extract_env(env), ConfigSource.ENV
         )
@@ -84,6 +91,8 @@ class LayeredConfig:
         for key, spec in self._specs.items():
             if key in env_layer:
                 raw, source = env_layer[key], ConfigSource.ENV
+            elif key in environment_layer:
+                raw, source = environment_layer[key], ConfigSource.ENVIRONMENT
             elif key in service_layer:
                 raw, source = service_layer[key], ConfigSource.SERVICE
             else:

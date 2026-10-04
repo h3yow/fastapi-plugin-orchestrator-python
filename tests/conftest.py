@@ -64,6 +64,39 @@ class FakeModule:
         self.stop_count += 1
 
 
+class ReloadableFake(FakeModule):
+    """带 reload() 的假模块：记录热更新次数，可注入重载失败。
+
+    fail_reload_when 接收新 config，返回 True 即拒绝该配置（模拟模块自身
+    在热更新阶段做业务校验失败）。
+    """
+
+    def __init__(
+        self,
+        module_id: str,
+        version: str = "1.0.0",
+        deps: tuple[Dependency, ...] = (),
+        capabilities: frozenset[str] = frozenset(),
+        fail_on_init: bool = False,
+        fail_reload_when=None,
+    ) -> None:
+        super().__init__(
+            module_id,
+            version=version,
+            deps=deps,
+            capabilities=capabilities,
+            fail_on_init=fail_on_init,
+        )
+        self.reload_count = 0
+        self.fail_reload_when = fail_reload_when
+
+    def reload(self, config: dict[str, Any], context: ModuleContext) -> None:
+        self.reload_count += 1
+        if self.fail_reload_when is not None and self.fail_reload_when(config, context):
+            raise RuntimeError(f"{self.spec.module_id} 拒绝新配置: {config}")
+        self.received_config = config
+
+
 @pytest.fixture
 def make_module():
     return FakeModule

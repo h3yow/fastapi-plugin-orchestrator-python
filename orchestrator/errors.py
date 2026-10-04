@@ -23,6 +23,9 @@ class FailureReason(str, Enum):
     MODULE_INIT_FAILED = "module_init_failed"
     DEPENDENCY_UNAVAILABLE = "dependency_unavailable"
     MODULE_NOT_FOUND = "module_not_found"
+    RELOAD_FAILED = "reload_failed"
+    CONFIG_SOURCE_REJECTED = "config_source_rejected"
+    ENVIRONMENT_NOT_FOUND = "environment_not_found"
 
 
 class OrchestratorError(Exception):
@@ -77,3 +80,21 @@ class DependencyUnavailableError(OrchestratorError):
 
 class ModuleNotFoundError(OrchestratorError):
     reason = FailureReason.MODULE_NOT_FOUND
+
+
+class ReloadFailedError(OrchestratorError):
+    """模块运行期热更新（reload）失败。"""
+
+    reason = FailureReason.RELOAD_FAILED
+
+
+class ConfigSourceRejectedError(OrchestratorError):
+    """运行期调整未声明可信来源，或来源不在允许集合内。"""
+
+    reason = FailureReason.CONFIG_SOURCE_REJECTED
+
+
+class EnvironmentNotFoundError(OrchestratorError):
+    """切换/查询了一个从未声明的部署环境。"""
+
+    reason = FailureReason.ENVIRONMENT_NOT_FOUND
