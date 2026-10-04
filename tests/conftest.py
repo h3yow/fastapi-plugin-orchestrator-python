@@ -34,6 +34,8 @@ class FakeModule:
         deps: tuple[Dependency, ...] = (),
         capabilities: frozenset[str] = frozenset(),
         fail_on_init: bool = False,
+        config_specs: list | None = None,
+        reconfigure_failures_remaining: int = 0,
     ) -> None:
         self._spec = ModuleSpec(
             module_id=module_id,
@@ -42,20 +44,35 @@ class FakeModule:
             provides_capabilities=capabilities,
         )
         self.fail_on_init = fail_on_init
+        self._config_specs = list(config_specs or [])
+        # 剩余多少次 reconfigure 会注入失败（用于级联回滚场景）
+        self.reconfigure_failures_remaining = reconfigure_failures_remaining
         self.init_count = 0
         self.start_count = 0
         self.stop_count = 0
+        self.reconfigure_count = 0
         self.received_config: dict[str, Any] | None = None
 
     @property
     def spec(self) -> ModuleSpec:
         return self._spec
 
+    def config_specs(self) -> list:
+        return list(self._config_specs)
+
     def init(self, config: dict[str, Any], context: ModuleContext) -> None:
         self.init_count += 1
         self.received_config = config
         if self.fail_on_init:
             raise RuntimeError(f"{self.spec.module_id} 初始化被注入失败")
+
+    def reconfigure(self, config: dict[str, Any], context: ModuleContext) -> None:
+        """运行期重载钩子：失败时不落新配置，保持旧值完整生效。"""
+        self.reconfigure_count += 1
+        if self.reconfigure_failures_remaining > 0:
+            self.reconfigure_failures_remaining -= 1
+            raise RuntimeError(f"{self.spec.module_id} 重载被注入失败")
+        self.received_config = config
 
     def start(self) -> None:
         self.start_count += 1
