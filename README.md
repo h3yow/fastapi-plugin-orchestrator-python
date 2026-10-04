@@ -17,6 +17,11 @@ uv run pytest --log-cli-level=INFO   # 查看每个用例的输入/决策依据/
 
 - `GET /` —— 模板默认行为，未改动。
 - `GET /modules` —— 查询各模块最终状态、失败原因与生效配置来源。
+- `GET /modules/{id}/config` —— 查询模块逐键生效值/来源层与最近一次调整结果。
+- `POST /modules/{id}/config` —— 不停机调整配置，body：
+  `{"overrides": {...}, "request_id": "可选，用于幂等去重"}`。
+- `POST /environment/{name}` —— 切换部署环境（示例内置 `dev`/`prod`，
+  当前环境由进程环境变量 `ORCH_ENVIRONMENT` 指定，默认 `dev`）。
 
 ## 模块契约
 
@@ -31,6 +36,8 @@ class MyModule:
     def stop(self) -> None: ...
     # 可选：声明配置键契约
     def config_specs(self) -> list[ConfigKeySpec]: ...
+    # 可选：运行期配置调整时优先调用；未提供则框架退化为 stop->init->start 重载
+    def reconfigure(self, config, context) -> None: ...
 ```
 
 `ModuleSpec` 声明：
@@ -66,7 +73,8 @@ class MyModule:
 `LayeredConfig` 对每个模块独立解析配置，层优先级（高覆盖低）：
 
 ```
-环境变量 (ORCH_<KEY>)  >  服务配置 (service_config[module_id])  >  默认值
+运行期调整 (runtime)  >  环境变量 (ORCH_<KEY>)  >  部署环境 (environment)
+    >  服务配置 (service_config[module_id])  >  默认值 (default)
 ```
 
 - **校验**：每个键经 `ConfigKeySpec.validator` 校验/转换，非法值抛
@@ -77,6 +85,55 @@ class MyModule:
 - **歧义拒绝**：同一层内新旧键同时出现且值不一致，抛
   `AmbiguousConfigOverrideError`，不做隐式选择。
 - 模块只能读到经 `init(config, ...)` 注入的已校验配置，无法触及未经校验的来源。
+
+## 运行期配置调整（不停机）
+
+`Orchestrator.update_config(module_id, overrides, request_id=None)` 在服务不重启、
+进程不中断的前提下调整指定模块的生效配置：
+
+- **同一套规则**：`overrides` 进入该模块的 `runtime` 层（最高优先级），与其余各层
+  一起按启动时完全相同的分层与校验规则重新解析——键名不对、取值非法、新旧写法
+  冲突一律拒绝（沿用 `unknown_config_key` / `invalid_config_value` /
+  `ambiguous_config_override` 三类 reason）。
+- **原子性**：两阶段提交——先对整批（目标 + 运行中的传递依赖方）完成全部校验，
+  再逐个应用。校验失败时旧配置分毫未动、完整继续生效，模块绝不会读到
+  半新半旧的值；应用阶段失败则整批回滚（见下节）。
+- **应用方式**：模块若提供 `reconfigure(config, context)` 钩子则优先调用；
+  未提供时框架退化为 `stop -> init -> start` 的原子重载。
+- **边界**：仅允许调整运行中（`running`）的模块，否则抛
+  `ModuleNotRunningError`（`reason=module_not_running`）；已停止模块的配置
+  在下次启动时按各层重新解析。
+- **可查询**：
+  - `effective_config(module_id)` —— 每个键当前的生效值与来源层；
+  - `last_update(module_id)` —— 最近一次调整的 `UpdateRecord`：成功与否、
+    失败卡在哪一步（`validate:<模块>` / `apply:<模块>` / `rollback:<模块>`）、
+    失败详情、级联涉及的模块列表。
+- **幂等**：携带同一 `request_id` 的重复提交直接返回首次结果，
+  不重复生效、也不报错。
+
+## 多环境配置隔离
+
+构造 `Orchestrator` 时传入 `environment`（当前环境名）与
+`environment_configs`（`{环境名: {module_id: {键: 值}}}`）：
+
+- **隔离**：每个环境的生效配置只来自 `environment_configs[当前环境]` 这一份，
+  切换环境不会把其他环境的值串进来；构造或切换到未声明的环境一律抛
+  `UnknownEnvironmentError`（`reason=unknown_environment`），当前状态不受影响。
+- **回落**：当前环境没有显式配置的键，自然回落到 service/default 等下层；
+  回落后的来源层通过 `effective_config()` / `config_sources` 可查询、可解释。
+- **切换**：`switch_environment(name)` 重解析全部运行中模块的配置并原子应用，
+  与配置调整共享同一套两阶段校验 + 整批回滚保证；切到当前环境是幂等空操作。
+
+## 依赖级联、回滚与并发
+
+- **级联**：调整某模块配置时，所有依赖它的运行中模块按依赖拓扑顺序一起完成
+  重载（`UpdateRecord.affected` 按应用顺序列出整批模块）。
+- **回滚**：级联中任何一步校验或重载失败，整批（含已应用的模块）逆序回滚到
+  改动前解析出的一致配置，不会出现一部分新、一部分旧的组合；回滚本身失败的
+  模块被标记 `FAILED`（`reason=config_update_failed`）并记录详情。
+- **并发**：所有调整与启停共用同一把互斥锁，多组并发调整被串行化，
+  最终结果等价于按某个确定顺序逐条执行；`last_update` 记录与最终生效值
+  一致，状态唯一且可解释。
 
 ## 生命周期与并发保证
 
@@ -96,8 +153,9 @@ class MyModule:
 ## 本地验证
 
 ```bash
-uv run pytest -q                      # 19 个用例：依赖环/缺失/版本/能力、配置分层与
-                                      # 旧键迁移、失败回滚、并发启停一致性
+uv run pytest -q                      # 37 个用例：依赖环/缺失/版本/能力、配置分层与
+                                      # 旧键迁移、失败回滚、并发启停一致性、
+                                      # 热更新、校验拒绝、环境隔离、级联回滚、并发调整
 uv run pytest --log-cli-level=INFO    # 每个用例打印：输入 | 决策依据 | 最终状态
 uv run python - <<'PY'
 from fastapi.testclient import TestClient
@@ -105,5 +163,20 @@ from main import app
 with TestClient(app) as c:
     print(c.get("/").json())          # {'Hello': 'World'} —— 默认行为未变
     print(c.get("/modules").json())   # core/web 均为 running
+
+    # 热更新：runtime 层生效，来源可查
+    print(c.post("/modules/core/config",
+                 json={"overrides": {"workers": 5}, "request_id": "demo-1"}).json())
+    print(c.get("/modules/core/config").json())
+
+    # 校验失败：422 + reason，旧配置完整生效
+    print(c.post("/modules/core/config",
+                 json={"overrides": {"workers": -1}}).status_code)
+    print(c.get("/modules/core/config").json())
+
+    # 环境切换：dev <-> prod 互不串扰，未知环境被拒绝
+    print(c.post("/environment/prod").json())
+    print(c.get("/modules/core/config").json())
+    print(c.post("/environment/nowhere").status_code)
 PY
 ```
