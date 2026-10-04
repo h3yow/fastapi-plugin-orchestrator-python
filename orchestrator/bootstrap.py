@@ -88,9 +88,17 @@ class WebModule:
 def build_default_orchestrator(
     service_config: dict[str, dict[str, Any]] | None = None,
     env: dict[str, str] | None = None,
+    environment: str | None = None,
+    environment_configs: dict[str, dict[str, dict[str, Any]]] | None = None,
 ) -> Orchestrator:
     """注册示例模块并返回编排器（尚未启动）。"""
     registry = ModuleRegistry()
     registry.register(CoreModule())
     registry.register(WebModule())
-    return Orchestrator(registry, service_config=service_config, env=env)
+    return Orchestrator(
+        registry,
+        service_config=service_config,
+        env=env,
+        environment=environment,
+        environment_configs=environment_configs,
+    )
