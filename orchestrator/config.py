@@ -1,4 +1,4 @@
-"""分层配置解析：默认值 < 服务配置 < 环境变量，含旧键迁移与严格校验。"""
+"""分层配置解析：默认值 < 服务配置 < 环境(部署)配置 < 环境变量 < 运行期调整，含旧键迁移与严格校验。"""
 
 from __future__ import annotations
 
@@ -19,7 +19,9 @@ class ConfigSource(str, Enum):
 
     DEFAULT = "default"
     SERVICE = "service"
+    ENVIRONMENT = "environment"
     ENV = "env"
+    RUNTIME = "runtime"
 
 
 @dataclass(frozen=True)
@@ -47,7 +49,8 @@ class ResolvedValue:
 class LayeredConfig:
     """对单模块的配置做分层解析。
 
-    层优先级：default < service < env。
+    层优先级（低 -> 高）：
+    default < service < environment（部署环境） < env（环境变量） < runtime（运行期调整）。
     环境变量键形如 ``{ENV_PREFIX}{KEY大写}``。
     """
 
@@ -63,6 +66,8 @@ class LayeredConfig:
         self,
         service_config: dict[str, Any] | None = None,
         env: dict[str, str] | None = None,
+        environment_config: dict[str, Any] | None = None,
+        runtime_config: dict[str, Any] | None = None,
     ) -> dict[str, ResolvedValue]:
         """解析并校验，返回 key -> ResolvedValue。
 
@@ -71,23 +76,29 @@ class LayeredConfig:
         - 校验失败 -> InvalidConfigValueError
         - 同一层内新旧键同时出现且值不一致 -> AmbiguousConfigOverrideError
         - 旧键迁移：旧键视为同层的新键别名，结果确定且来源可解释
+        - 任一层为 None 视为该层无配置，自然回落到下一层
         """
         service_config = service_config or {}
         env = env if env is not None else dict(os.environ)
 
-        service_layer = self._normalize_layer(service_config, ConfigSource.SERVICE)
-        env_layer = self._normalize_layer(
-            self._extract_env(env), ConfigSource.ENV
-        )
+        # 层列表按优先级从低到高排列，后者覆盖前者
+        layers: list[tuple[dict[str, Any], ConfigSource]] = [
+            (self._normalize_layer(service_config, ConfigSource.SERVICE),
+             ConfigSource.SERVICE),
+            (self._normalize_layer(environment_config or {}, ConfigSource.ENVIRONMENT),
+             ConfigSource.ENVIRONMENT),
+            (self._normalize_layer(self._extract_env(env), ConfigSource.ENV),
+             ConfigSource.ENV),
+            (self._normalize_layer(runtime_config or {}, ConfigSource.RUNTIME),
+             ConfigSource.RUNTIME),
+        ]
 
         resolved: dict[str, ResolvedValue] = {}
         for key, spec in self._specs.items():
-            if key in env_layer:
-                raw, source = env_layer[key], ConfigSource.ENV
-            elif key in service_layer:
-                raw, source = service_layer[key], ConfigSource.SERVICE
-            else:
-                raw, source = spec.default, ConfigSource.DEFAULT
+            raw, source = spec.default, ConfigSource.DEFAULT
+            for layer, layer_source in layers:
+                if key in layer:
+                    raw, source = layer[key], layer_source
             resolved[key] = ResolvedValue(self._validate(spec, raw, source), source)
         return resolved
 

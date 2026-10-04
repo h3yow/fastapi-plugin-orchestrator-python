@@ -23,6 +23,9 @@ class FailureReason(str, Enum):
     MODULE_INIT_FAILED = "module_init_failed"
     DEPENDENCY_UNAVAILABLE = "dependency_unavailable"
     MODULE_NOT_FOUND = "module_not_found"
+    MODULE_NOT_RUNNING = "module_not_running"
+    UNKNOWN_ENVIRONMENT = "unknown_environment"
+    CONFIG_UPDATE_FAILED = "config_update_failed"
 
 
 class OrchestratorError(Exception):
@@ -77,3 +80,17 @@ class DependencyUnavailableError(OrchestratorError):
 
 class ModuleNotFoundError(OrchestratorError):
     reason = FailureReason.MODULE_NOT_FOUND
+
+
+class ModuleNotRunningError(OrchestratorError):
+    reason = FailureReason.MODULE_NOT_RUNNING
+
+
+class UnknownEnvironmentError(OrchestratorError):
+    reason = FailureReason.UNKNOWN_ENVIRONMENT
+
+
+class ConfigUpdateError(OrchestratorError):
+    """运行期配置调整在应用/级联/回滚阶段失败。"""
+
+    reason = FailureReason.CONFIG_UPDATE_FAILED

@@ -67,7 +67,13 @@ class ModuleSpec:
 
 @runtime_checkable
 class Module(Protocol):
-    """模块运行期协议：框架只依赖该协议驱动生命周期。"""
+    """模块运行期协议：框架只依赖该协议驱动生命周期。
+
+    可选钩子（通过 ``getattr`` 探测，不属于本协议的必需方法）：
+    - ``config_specs() -> list[ConfigKeySpec]``：声明配置键契约。
+    - ``reconfigure(config, context) -> None``：运行期配置调整时优先调用；
+      未提供时框架退化为 stop -> init -> start 的原子重载。
+    """
 
     @property
     def spec(self) -> ModuleSpec: ...
